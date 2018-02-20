@@ -50,5 +50,29 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
-                    
+let evalBinaryOperation operation exprLeft exprRight =
+  let booleanOfInt value = if value = 0 then false else true in
+  let intOfBoolean value = if value = true then 1 else 0 in
+  match operation with
+  | "+" -> exprLeft + exprRight
+  | "-" -> exprLeft - exprRight
+  | "*" -> exprLeft * exprRight
+  | "/" -> exprLeft / exprRight
+  | "%" -> exprLeft mod exprRight
+  | "==" -> intOfBoolean(exprLeft == exprRight)
+  | "!=" -> intOfBoolean(exprLeft != exprRight)
+  | "<"  -> intOfBoolean(exprLeft < exprRight)
+  | "<=" -> intOfBoolean(exprLeft <= exprRight)
+  | ">"  -> intOfBoolean(exprLeft > exprRight)
+  | ">=" -> intOfBoolean(exprLeft >= exprRight)
+  | "&&" -> intOfBoolean(booleanOfInt exprLeft && booleanOfInt exprRight)
+  | "!!" -> intOfBoolean(booleanOfInt exprLeft || booleanOfInt exprRight)
+  | _ -> failwith "Wrong operation"
+
+let rec eval state expr =
+  let eval' = eval state in
+  match expr with
+  | Const value -> value
+  | Var var -> var
+  | Binop(op, l, r) -> evalBinaryOperation op (eval' l) (eval' r)
+                 
