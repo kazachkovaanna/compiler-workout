@@ -73,6 +73,6 @@ let rec eval state expr =
   let eval' = eval state in
   match expr with
   | Const value -> value
-  | Var var -> var
+  | Var var -> state var
   | Binop(op, l, r) -> evalBinaryOperation op (eval' l) (eval' r)
                  
