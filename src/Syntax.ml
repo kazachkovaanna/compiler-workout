@@ -41,7 +41,31 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+let evalBinaryOperation operation exprLeft exprRight =
+  let booleanOfInt value = if value = 0 then false else true in
+  let intOfBoolean value = if value = true then 1 else 0 in
+  match operation with
+  | "+" -> exprLeft + exprRight
+  | "-" -> exprLeft - exprRight
+  | "*" -> exprLeft * exprRight
+  | "/" -> exprLeft / exprRight
+  | "%" -> exprLeft mod exprRight
+  | "==" -> intOfBoolean(exprLeft == exprRight)
+  | "!=" -> intOfBoolean(exprLeft != exprRight)
+  | "<"  -> intOfBoolean(exprLeft < exprRight)
+  | "<=" -> intOfBoolean(exprLeft <= exprRight)
+  | ">"  -> intOfBoolean(exprLeft > exprRight)
+  | ">=" -> intOfBoolean(exprLeft >= exprRight)
+  | "&&" -> intOfBoolean(booleanOfInt exprLeft && booleanOfInt exprRight)
+  | "!!" -> intOfBoolean(booleanOfInt exprLeft || booleanOfInt exprRight)
+  | _ -> failwith "Wrong operation"
+
+let rec eval state expr =
+  let eval' = eval state in
+  match expr with
+  | Const value -> value
+  | Var var -> state var
+  | Binop(op, l, r) -> evalBinaryOperation op (eval' l) (eval' r)
 
   end
                     
@@ -65,7 +89,15 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval (state, input, output) statement = 
+    match statement with
+    | Assign (x, expr) -> (Expr.update x (Expr.eval state expr) state, input, output)
+    | Read (x) -> 
+      (match input with
+      | z::tail -> (Expr.update x z state, tail, output)
+      | [] -> failwith "Empty input stream")
+    | Write (expr) -> (state, input, output @ [(Expr.eval state expr)])
+    | Seq (frts_stmt, scnd_stmt) -> (eval (eval (state, input, output) frts_stmt ) scnd_stmt)
                                                          
   end
 
