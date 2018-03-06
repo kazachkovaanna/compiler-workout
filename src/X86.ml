@@ -102,6 +102,9 @@ let rec compile env code =
             let register, env = (env#global var)#allocate in env, [Mov(M env#loc var, eax); Mov(eax, register)]
           |ST var ->
             let register, env = (env#global var)#pop in env, [Mov (register, eax); Mov(eax, M env#loc var)]
+          | LABEL l -> env, [Label l]
+          | JMP l -> env, [Jmp l]
+          | CJMP (c, l) -> let o, env = env#pop in env, [Binop ("cmp", L 0, o); CJmp (c, l)]
           |BINOP operation ->
             let leftOperation, rightOperation, env = env#pop2 in
               let result, env = env#allocate in
