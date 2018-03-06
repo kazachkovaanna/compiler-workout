@@ -44,8 +44,34 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let evalBinaryOperation operation exprLeft exprRight =
+      let booleanOfInt value = if value = 0 then false else true in
+      let intOfBoolean value = if value = true then 1 else 0 in
+      match operation with
+      | "+" -> exprLeft + exprRight
+      | "-" -> exprLeft - exprRight
+      | "*" -> exprLeft * exprRight
+      | "/" -> exprLeft / exprRight
+      | "%" -> exprLeft mod exprRight
+      | "==" -> intOfBoolean(exprLeft == exprRight)
+      | "!=" -> intOfBoolean(exprLeft != exprRight)
+      | "<"  -> intOfBoolean(exprLeft < exprRight)
+      | "<=" -> intOfBoolean(exprLeft <= exprRight)
+      | ">"  -> intOfBoolean(exprLeft > exprRight)
+      | ">=" -> intOfBoolean(exprLeft >= exprRight)
+      | "&&" -> intOfBoolean(booleanOfInt exprLeft && booleanOfInt exprRight)
+      | "!!" -> intOfBoolean(booleanOfInt exprLeft || booleanOfInt exprRight)
+      | _ -> failwith "Wrong operation"
 
+    let rec eval state expr =
+      let eval' = eval state in
+      match expr with
+      | Const value -> value
+      | Var var -> state var
+      | Binop(op, l, r) -> evalBinaryOperation op (eval' l) (eval' r)
+
+    let elementsOperation operationsList = let binOperationList op = (ostap ($(op)), fun l r -> Binop (op, l, r))
+      in List.map binOperationList operationsList;;
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
@@ -53,7 +79,22 @@ module Expr =
    
     *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse:
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta, elementsOperation ["!!"];
+            `Lefta, elementsOperation ["&&"];
+            `Nona,  elementsOperation [">="; ">"; "<="; "<"; "=="; "!="];
+            `Lefta, elementsOperation ["+"; "-"];
+            `Lefta, elementsOperation ["*"; "/"; "%"]
+          |]
+          primary
+        );
+      primary: 
+        var:IDENT {Var var} 
+        | literal:DECIMAL {Const literal} 
+        | -"(" parse -")"
     )
 
   end
@@ -78,11 +119,24 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval (state, input, output) statement = 
+      match statement with
+      | Assign (var, expr) -> (Expr.update var (Expr.eval state expr) state, input, output)
+      | Read (var) -> 
+        (match input with
+        | list::tail -> (Expr.update var list state, tail, output)
+        | [] -> failwith "Empty input stream")
+      | Write (expr) -> (state, input, output @ [(Expr.eval state expr)])
+      | Seq (firstStatement, secondStatement) -> (eval (eval (state, input, output) firstStatement ) secondStatement)
 
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse: sequence | statement;
+      statement: read | write | assign;
+      read: "read" -"(" var:IDENT -")" {Read var};
+      write: "write" -"(" expr:!(Expr.parse) -")" { Write expr };
+      assign: var:IDENT -":=" expr:!(Expr.parse) { Assign (var, expr) };
+      sequence: firstStatement:statement -";" secondStatement:parse { Seq (firstStatement, secondStatement) }
     )
       
   end

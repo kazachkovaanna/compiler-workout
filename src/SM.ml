@@ -24,7 +24,28 @@ type config = int list * Stmt.config
 
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
-let eval _ = failwith "Not yet implemented"
+let rec eval config prog =
+	match prog with
+	| [] -> config
+	|instruction::tail -> (
+		match config, instruction with
+		| (y::x::stack, conf), BINOP operation -> 
+			let value = Language.Expr.evalBinaryOperation operation x y in
+			eval (value::stack, conf) tail
+		| (stack, conf), CONST value ->
+			eval (value::stack, conf) tail
+		| (stack, (stmnt, z::input, output)), READ -> 
+			eval (z::stack, (stmnt, input, output)) tail
+		| (z::stack, (stmnt, input, output)), WRITE -> 
+			eval (stack, (stmnt, input, output @ [z])) tail
+		| (stack, (stmnt, input, output)), LD x -> 
+			let value = stmnt x in
+			eval (value::stack, (stmnt, input, output)) tail
+		| (z::stack, (stmnt, input, output)), ST x -> 
+			let stt = Language.Expr.update x z stmnt in
+			eval (stack, (stt, input, output)) tail
+	)
+
 
 (* Top-level evaluation
 
@@ -41,4 +62,15 @@ let run p i = let (_, (_, _, o)) = eval ([], (Language.Expr.empty, i, [])) p in 
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
-let compile _ = failwith "Not yet implemented"
+let rec compileExpression expr = 
+	match expr with
+	| Language.Expr.Const c -> [CONST c]
+	| Language.Expr.Var x -> [LD x]
+	| Language.Expr.Binop (operation, leftOperation, rightOperation) -> compileExpression leftOperation @ compileExpression rightOperation @ [BINOP operation]
+
+let rec compile statement = 
+	match statement with
+	| Language.Stmt.Assign (x, expr) -> compileExpression expr @ [ST x]
+	| Language.Stmt.Read x -> [READ; ST x]
+	| Language.Stmt.Write expr -> compileExpression expr @ [WRITE]
+	| Language.Stmt.Seq (leftStatement, rightStatement) -> compile leftStatement @ compile rightStatement
