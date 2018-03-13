@@ -80,7 +80,105 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not yet implemented"
+let rec compile env code = 
+  match code with
+    [] -> env, []
+    |headInstruction::tailOfInstructions ->
+      let env, instruction =
+        match headInstruction with
+          |CONST n -> 
+            let register, env = env#allocate in env, [Mov (L n, register)]
+          |READ ->
+            let register, env = env#allocate in env, [Call "Lread"; Mov(eax, register)]
+          |WRITE ->
+            let register, env = env#pop in env, [Push register; Call "Lwrite"; Pop eax]
+          |LD var ->
+            let register, env = (env#global var)#allocate in env, [Mov(M env#loc var, eax); Mov(eax, register)]
+          |ST var ->
+            let register, env = (env#global var)#pop in env, [Mov (register, eax); Mov(eax, M env#loc var)]
+          |BINOP operation ->
+            let leftOperation, rightOperation, env = env#pop2 in
+              let result, env = env#allocate in
+                let asmInstructions = match operation with
+                  |"+" ->	[Mov(rightOperation, eax); Binop("+", leftOperation, eax); Mov(eax, result)]
+                  |"-" ->	[Mov(rightOperation, eax); Binop("-", leftOperation, eax); Mov(eax, result)]
+                  |"*" ->	[Mov(rightOperation, eax); Binop("*", leftOperation, eax); Mov(eax, result)]
+                  |"/" -> [Mov (rightOperation, eax); Cltd; IDiv leftOperation; Mov(eax, result)]
+                  |"%" -> [Mov (rightOperation, eax); Cltd; IDiv leftOperation; Mov(edx, result)]
+                  |"&&" ->	
+                    [
+                      Binop("^", eax, eax);
+                      Binop("cmp", (L 0), rightOperation);
+                      Set("ne", "%al");
+                      Binop("^", edx, edx);
+                      Binop("cmp", (L 0), leftOperation);
+                      Set("ne", "%dl");
+                      Binop("&&", edx, eax);
+                      Mov(eax, result)
+                    ]
+                  |"!!" ->	
+                    [
+                      Binop("^", eax, eax);
+                      Binop("cmp", (L 0), rightOperation);
+                      Set("ne", "%al");
+                      Binop("^", edx, edx);
+                      Binop("cmp", (L 0), leftOperation);
+                      Set("ne", "%dl");
+                      Binop("!!", edx, eax);
+                      Mov(eax, result)
+                    ]
+                  |"==" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("e", "%al"); 
+                      Mov(eax, result)
+                    ]
+                  |"!=" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("ne", "%al"); 
+                      Mov(eax, result)
+                    ]
+                  |"<" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("l", "%al"); 
+                      Mov(eax, result)
+                    ]
+                  |"<=" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("le", "%al"); 
+                      Mov(eax, result)
+                    ]
+                  |">" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("g", "%al"); 
+                      Mov(eax, result)
+                    ]
+                  |">=" -> 
+                    [
+                      Binop("^", eax, eax); 
+                      Mov(rightOperation, edx); 
+                      Binop("cmp", leftOperation, edx); 
+                      Set("ge", "%al"); 
+                      Mov(eax, result)
+                    ]
+            in env, asmInstructions
+          in
+            let env, otherAsmInstructions = compile env tailOfInstructions 
+          in env, instruction @ otherAsmInstructions
 
 (* A set of strings *)           
 module S = Set.Make (String)
