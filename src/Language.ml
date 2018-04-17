@@ -74,15 +74,68 @@ module Expr =
        which takes an environment (of the same type), a name of the function, a list of actual parameters and a configuration, 
        an returns a pair: the return value for the call and the resulting configuration
     *)                                                       
-    let rec eval env ((st, i, o, r) as conf) expr = failwith "Not implemented"
-         
+    let evalBinaryOperation operation exprLeft exprRight =
+      let booleanOfInt value = if value = 0 then false else true in
+      let intOfBoolean value = if value = true then 1 else 0 in
+      match operation with
+      | "+" -> exprLeft + exprRight
+      | "-" -> exprLeft - exprRight
+      | "*" -> exprLeft * exprRight
+      | "/" -> exprLeft / exprRight
+      | "%" -> exprLeft mod exprRight
+      | "==" -> intOfBoolean(exprLeft == exprRight)
+      | "!=" -> intOfBoolean(exprLeft != exprRight)
+      | "<"  -> intOfBoolean(exprLeft < exprRight)
+      | "<=" -> intOfBoolean(exprLeft <= exprRight)
+      | ">"  -> intOfBoolean(exprLeft > exprRight)
+      | ">=" -> intOfBoolean(exprLeft >= exprRight)
+      | "&&" -> intOfBoolean(booleanOfInt exprLeft && booleanOfInt exprRight)
+      | "!!" -> intOfBoolean(booleanOfInt exprLeft || booleanOfInt exprRight)
+      | _ -> failwith "Wrong operation"
+    
+    let rec eval env ((st, i, o, r) as conf) expr = 
+      match expr with
+      | Const value -> (st, i, o, Some value)
+      | Var var -> (st, i, o, Some (State.eval st var))
+      | Binop (op, l, r) ->
+        let (st', i', o', Some left) = eval env conf l in
+        let (st'', i'', o'', Some right) = eval env (st', i', o', Some left) r in
+        (st'', i'', o'', Some (evalBinaryOperation op left right))
+      | Call (name, args) ->
+        let rec evaluateArgs env conf args =
+          match args with
+          | expr::args' ->
+            let (st', i', o', Some evaluated_args) as conf' = eval env conf expr in
+            let evaluated_args', conf' = evaluateArgs env conf' args' in
+              evaluated_args::evaluated_args', conf'
+          | [] -> [], conf
+        in let evaluated_args, conf' = evaluateArgs env conf args in
+        env#definition env name evaluated_args conf 
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string                                                                                                                  
     *)
-    ostap (                                      
-      parse: empty {failwith "Not implemented"}
+
+    let elementsOperation operationsList = let binOperationList op = (ostap ($(op)), fun l r -> Binop (op, l, r))
+      in List.map binOperationList operationsList;;
+    ostap (
+      parse:
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta, elementsOperation ["!!"];
+            `Lefta, elementsOperation ["&&"];
+            `Nona,  elementsOperation [">="; ">"; "<="; "<"; "=="; "!="];
+            `Lefta, elementsOperation ["+"; "-"];
+            `Lefta, elementsOperation ["*"; "/"; "%"]
+          |]
+          primary
+        );
+      primary: 
+        var:IDENT {Var var} 
+        | literal:DECIMAL {Const literal} 
+        | -"(" parse -")"
     )
     
   end
@@ -111,11 +164,64 @@ module Stmt =
        Takes an environment, a configuration and a statement, and returns another configuration. The 
        environment is the same as for expressions
     *)
-    let rec eval env ((st, i, o, r) as conf) k stmt = failwith "Not implemented"
+    let rec eval env ((st, i, o, r) as conf) k stmt =
+      let makeSeq st_1 st_2 =
+    		(match st_2 with
+        | Skip -> st_1
+			  | _    -> Seq(st_1, st_2)) in
+		  match stmt with 
+			| Assign (var, expr) ->
+        let (st, i,o, Some v) = Expr.eval env conf expr in
+        eval env (State.update var v st, i, o, r) 
+        Skip k
+			| Read var -> eval env (State.update var (List.hd i) st, List.tl i, o, r) 
+        Skip k
+			| Write expr ->
+			  let (st, i, o, Some v) = Expr.eval env conf expr in
+			  eval env (st, i, o @ [v], r) 
+        Skip k
+			| Seq (st1, st2) -> eval env conf (makeSeq st2 k) st1
+      | Skip ->
+        match k with
+        | Skip -> conf
+        | _    -> eval env conf 
+        Skip k 
+			| If (cond, l, r) ->
+			  let (_, _, _, Some v) = Expr.eval env conf cond in
+			  eval env conf k (if v <> 0 then l else r) 
+			| While (cond, st) -> 
+        eval env conf k 
+          (If (cond, Seq (st, While (cond, st)), Skip))
+			| Repeat (st, cond) -> 
+        eval env conf k 
+          (Seq (st, If (cond, Skip, Repeat (st, cond))))
+			| Return expr -> (
+				match expr with
+				| None -> conf
+				| Some expr -> Expr.eval env conf expr
+        )
+			| Call (func, args) -> 
+        eval env (Expr.eval env conf (Expr.Call (func, args))) 
+        Skip k
          
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented"}
+      parse: sequence | statement;
+      statement: read | write | assign | if_ | while_ | for_ | repeat_ | skip | call;
+      read: "read" -"(" var:IDENT -")" {Read var};
+      write: "write" -"(" expr:!(Expr.parse) -")" { Write expr };
+      assign: var:IDENT -":=" expr:!(Expr.parse) { Assign (var, expr) };
+      if_: "if" expr:!(Expr.parse) "then" stmt:parse "fi" {If (expr, stmt, Skip)}
+         | "if" expr:!(Expr.parse) "then" stmt1:parse  else_elif:else_or_elif "fi" {If (expr, stmt1, else_elif)};
+      else_or_elif : else_ | elif_;
+      else_: "else" stmt:parse {stmt};
+      elif_: "elif" expr:!(Expr.parse) "then" stmt1:parse stmt2:else_or_elif "fi" {If (expr, stmt1, stmt2)};
+      while_: "while" expr:!(Expr.parse) "do" stmt:parse "od" {While (expr, stmt)};
+      for_: "for" initial:parse "," expr:!(Expr.parse) "," stmt1:parse "do" stmt2:parse "od" {Seq (initial, While(expr, Seq(stmt1, stmt2)))};
+      repeat_ : "repeat" stmt:parse "until" expr:!(Expr.parse) {Repeat (stmt, expr)};
+      skip: "skip" {Skip};
+      call: var:IDENT "(" args:!(Util.list0)[Expr.parse] ")" {Call (var, args)};
+      sequence: firstStatement:statement -";" secondStatement:parse { Seq (firstStatement, secondStatement) }
     )
       
   end
