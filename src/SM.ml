@@ -170,5 +170,5 @@ let compile_all labels defs =
     (labels, []) defs
 let compile (defs, p) = let endLabel, labels = (new labels)#new_label in
   let labels1, compiledProgram = compile_labels labels p in 
-  let labels2, defs = compile_all labels1 defs in
-  (compiledProgram @ [LABEL endLabel]) @ [END] @ (List.concat defs)
+  let labels2, defs' = compile_all labels1 defs in
+  (compiledProgram @ [LABEL endLabel]) @ [END] @ (List.concat defs')

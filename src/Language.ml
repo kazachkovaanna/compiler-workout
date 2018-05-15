@@ -215,7 +215,7 @@ module Expr =
         | c:CHAR {Const (Char.code c)}
         | "[" elements:!(Util.list0)[parse] "]" {Array elements}
         | "`" t:IDENT args:(-"(" !(Util.list)[parse] -")")? {Sexp (t, match args with None -> [] | Some reallyArgs -> reallyArgs)} 
-        | x:IDENT  s: ("(" args: !(Util.list0)[parse] "" {Call (x, args)} | empty {Var x}) {s}
+        | x:IDENT  s: ("(" args: !(Util.list0)[parse] ")" {Call (x, args)} | empty {Var x}) {s}
         | -"(" parse -")"
     )
     
