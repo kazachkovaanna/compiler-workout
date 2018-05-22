@@ -90,6 +90,22 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
+
+let int_of_char c = match c with
+  | c when c <= 'Z' -> Char.code c - 64
+  | '_' -> 53
+  | c -> Char.code c - 70
+
+let rec eval_int tag len acc ind = 
+  if (ind >= len) then acc
+  else
+  eval_int tag len ((acc lsl 6) lor int_of_char tag.[ind]) (ind + 1)
+
+let int_of_tag tag=
+  let tlen = String.length tag in 
+  let stag = String.sub tag 0 (if tlen < 5 then tlen else 5) in
+  eval_int stag tlen 0 0
+
 let compile env code =
   let suffix = function
   | "<"  -> "l"
@@ -145,7 +161,8 @@ let compile env code =
              let l, env = env#allocate in
              let env, call = call env ".string" 1 false in
              (env, Mov (M ("$" ^ s), l) :: call)
-             
+    | SEXP (tag, ind) -> let newEnv, code = call env ".sexp" (ind + 1) true in
+      newEnv, [Push (L (int_of_tag tag))] @ code         
 	  | LD x ->
              let s, env' = (env#global x)#allocate in
              env',

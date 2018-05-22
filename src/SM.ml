@@ -141,7 +141,7 @@ class labels =
 
 let make_label name = "L" ^ name
 
-let rec compile_labels labels =
+let rec compile_labels ll labels =
   let rec expr = function
   | Expr.Var   x          -> [LD x]
   | Expr.Const n          -> [CONST n]
@@ -151,47 +151,73 @@ let rec compile_labels labels =
   | Expr.Length t         -> expr t @ [CALL ("$length", 1, false)]
   | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
   | Expr.Call (f, args)   -> compile_call f args false
-  and compile_call f args p = let compile_args = List.map expr (List.rev args) in
-    let cArgs = List.concat compile_args in
+  | Expr.Sexp (t, xs)     -> List.flatten (List.map expr xs) @ [SEXP (t, List.length xs)]
+  and compile_call f args p = let cArgList = List.map expr (List.rev args) in
+    let cArgs = List.concat cArgList in
     cArgs @ [CALL (make_label f, List.length args, p)]
+  and pattern lf = function
+  | Stmt.Pattern.Wildcard         -> [DROP]
+  | Stmt.Pattern.Sexp     (t, ps) -> [DUP; TAG t; CJMP ("z", lf)] @ (List.concat (List.mapi (fun i p -> [DUP; CONST i; CALL (".elem", 2, false)] @ pattern lf p) ps))
+  | Stmt.Pattern.Ident     n      -> [DROP]
+  and binds p =
+    let rec inner = function
+    | Stmt.Pattern.Ident n      -> [SWAP]
+    | Stmt.Pattern.Sexp (_, ps) -> (List.flatten (List.mapi (fun i p -> [DUP; CONST i; CALL (".elem", 2, false)] @ inner p) ps)) @ [DROP]
+    | Stmt.Pattern.Wildcard     -> [DROP]
+    in
+    inner p @ [ENTER (Stmt.Pattern.vars p)]
   in
   function
   | Stmt.Seq (s1, s2)  -> 
-    let labels1, res1 = compile_labels labels s1 in
-    let labels2, res2 = compile_labels labels1 s2 in
-    labels2, res1 @ res2
+    let l2, labels = labels#new_label in
+    let labels1, res1 = compile_labels l2 labels s1 in
+    let labels2, res2 = compile_labels ll labels1 s2 in
+    labels2, res1 @ [LABEL l2] @ res2
   | Stmt.Assign (x, [], e) -> labels, expr e @ [ST x]
   | Stmt.Assign (x, is, e) -> labels, List.flatten (List.map expr (is @ [e])) @ [STA (x, List.length is)]
   | Stmt.Skip          -> labels, []
-  | Stmt.If (condition, argIF, argElse) ->
-    let cCond = expr condition in
+  | Stmt.If (condition, argIf, argElse) ->
+    let compiledCondition = expr condition in
     let jumpElse, labels1 = labels#new_label in
     let jumpEndIf, labels2 = labels1#new_label in
-    let labels3, compiledIf = compile_labels labels2 argIF in
-    let labels4, compiledElse = compile_labels labels3 argElse in
-    labels4, cCond @ [CJMP ("z", jumpElse)] @ compiledIf @ [JMP jumpEndIf] @ [LABEL jumpElse] @ compiledElse @ [LABEL jumpEndIf]
+    let labels3, cIf = compile_labels ll labels2 argIf in
+    let labels4, cElse = compile_labels ll labels3 argElse in
+    labels4, compiledCondition @ [CJMP ("z", jumpElse)] @ cIf @ [JMP jumpEndIf] @ [LABEL jumpElse] @ cElse @ [LABEL jumpEndIf]
   | Stmt.While (condition, loop) ->
-    let cCond = expr condition in
+    let compiledCondition = expr condition in
     let labelBegin, labels1 = labels#new_label in
     let labelEnd, labels2 = labels1#new_label in
-    let labels3, compile_loop = compile_labels labels2 loop in
-    labels3, [LABEL labelBegin] @ cCond @ [CJMP ("z", labelEnd)] @ compile_loop @ [JMP labelBegin] @ [LABEL labelEnd] 
+    let labels3, compiledloop = compile_labels labelEnd labels2 loop in
+    labels3, [LABEL labelBegin] @ compiledCondition @ [CJMP ("z", labelEnd)] @ compiledloop @ [JMP labelBegin] @ [LABEL labelEnd] 
   | Stmt.Repeat (loop, condition) ->
-    let cCond = expr condition in
+    let compiledCondition = expr condition in
     let labelBegin, labels1 = labels#new_label in
-    let labels2, compile_loop = compile_labels labels1 loop in
-    labels2, [LABEL labelBegin] @ compile_loop @ cCond @ [CJMP ("z", labelBegin)]
+    let labelEnd, labels1 = labels#new_label in
+    let labels2, compiledloop = compile_labels labelEnd labels1 loop in
+    labels2, [LABEL labelBegin] @ compiledloop @ [LABEL labelEnd] @ compiledCondition @ [CJMP ("z", labelBegin)]
   | Stmt.Call (f, args) -> labels, compile_call f args true
   | Stmt.Return res -> labels, (match res with None -> [] | Some v -> expr v) @ [RET (res <> None)]
+  | Stmt.Leave -> labels, [LEAVE]
+  | Stmt.Case (e, [p, s]) ->
+    let patternCode = pattern ll p in
+    let labels1, statementCode = compile_labels ll labels (Stmt.Seq (s, Stmt.Leave)) in
+    labels1, expr e @ patternCode @ binds p @ statementCode
+  | Stmt.Case (e, branches) ->
+    let n = List.length branches - 1 in
+    let labels2, _, _, code = 
+      List.fold_left (fun (env1, labelss, i, code) (p, s) -> let (lf, env), jmp = if i = n then (ll, env1), [] else labels#new_label, [JMP ll] in 
+        let patternCode = pattern lf p in let labels1, statementCode = compile_labels ll labels (Stmt.Seq (s, Stmt.Leave)) in  
+        (labels1, Some lf, i + 1, ((match labelss with None -> [] | Some l -> [LABEL l]) @ patternCode @ binds p @ statementCode @ jmp) :: code)) (labels, None, 0, []) branches
+    in labels2, expr e @ (List.flatten (List.rev code))
 
 let compile_func labels (name, (args, locals, body)) = let endLabel, labels1 = labels#new_label in
-  let labels2, compiledFunction = compile_labels labels1 body in
+  let labels2, compiledFunction = compile_labels endLabel labels1 body in
   labels2, [LABEL name; BEGIN (name, args, locals)] @ compiledFunction @ [LABEL endLabel; END]
 
 let compile_all labels defs = 
   List.fold_left (fun (labels, allDefsCode) (name, others) -> let labels1, singleCode = compile_func labels (make_label name, others) in labels1, singleCode::allDefsCode)
     (labels, []) defs
 let compile (defs, p) = let endLabel, labels = (new labels)#new_label in
-  let labels1, compiledProgram = compile_labels labels p in 
+  let labels1, compiledProgram = compile_labels endLabel labels p in 
   let labels2, defs' = compile_all labels1 defs in
   (compiledProgram @ [LABEL endLabel]) @ [END] @ (List.concat defs')
